@@ -1,0 +1,29 @@
+name: Trivy Scan for OWASP Juice Shop
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Scan on OWASP Juice Shop
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: bkimminich/juice-shop
+          format: table
+
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-juice-shop-report
+          path: trivy-report.json
