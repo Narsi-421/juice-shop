@@ -20,7 +20,7 @@ jobs:
 
       - name: Upload Dependabot Alerts to DefectDojo
         env:
-          DEFECTDOJO_URL: https://defectdojo.greytip.com
+          DEFECTDOJO_URL: http://192.168.15.20:8080
           DEFECTDOJO_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}  
         run: |
           curl -X POST "$DEFECTDOJO_URL/api/v2/import-scan/" \
