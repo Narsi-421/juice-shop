@@ -1,36 +1,32 @@
-name: Send Dependabot Alerts to DefectDojo
+name: Dependabot Alerts to DefectDojo
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *' # Runs every day at midnight UTC
 
 jobs:
-  send-alerts:
-    runs-on: ubuntu-latest
+  upload-dependabot-alerts:
+    runs-on: self-hosted  # 👈 This is important! Runs on your internal runner
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download Dependabot Alerts
-        env:
-          GITHUB_TOKEN_FOR_ALERTS: ${{ secrets.GITHUB_TOKEN_FOR_ALERTS }}
+      - name: Generate Dependabot Alerts (example simulation)
         run: |
-          curl -s -H "Authorization: token $GITHUB_TOKEN_FOR_ALERTS" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/Narsi-421/juice-shop/dependabot/alerts \
-            -o dependabot-alerts.json
+          echo '{ "alerts": [ { "package": "express", "severity": "HIGH", "details": "Example alert" } ] }' > dependabot-alerts.json
 
       - name: Upload Dependabot Alerts to DefectDojo
         env:
-          DEFECTDOJO_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}
-          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_URL: https://defectdojo.greytip.com
+          DEFECTDOJO_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}  
         run: |
           curl -X POST "$DEFECTDOJO_URL/api/v2/import-scan/" \
             -H "Authorization: Token $DEFECTDOJO_API_TOKEN" \
-            -F 'file=@dependabot-alerts.json' \
-            -F 'engagement=1' \
-            -F 'scan_type=GitHub Vulnerability Scan' \
-            -F 'active=true' \
-            -F 'verified=true'
+            -F "engagement=1" \
+            -F "scan_type=Dependency Scan" \
+            -F "active=true" \
+            -F "verified=true" \
+            -F "file=@dependabot-alerts.json"
