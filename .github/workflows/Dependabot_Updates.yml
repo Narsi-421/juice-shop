@@ -39,7 +39,7 @@ jobs:
           with open("dependabot.csv", "w") as out:
               writer = csv.writer(out)
               writer.writerow(["Title", "CWE ID", "Severity", "Description", "Mitigation",
-                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version"])
+                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version","Date"])
               for alert in alerts:
                   sa = alert.get("security_advisory", {})
                   sv = alert.get("security_vulnerability", {})
