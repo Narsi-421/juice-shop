@@ -3,11 +3,11 @@ name: Dependabot Alerts to DefectDojo
 on:
   schedule:
     - cron: '0 2 * * *'  # Runs daily at 2 AM UTC
-  workflow_dispatch:      # Also allows manual triggering
+  workflow_dispatch:
 
 jobs:
   upload-dependabot:
-    runs-on: self-hosted  # Must run on a self-hosted runner with network access to DefectDojo
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code
@@ -31,14 +31,26 @@ jobs:
 
           with open("dependabot.csv", "w") as out:
               writer = csv.writer(out)
-              writer.writerow(["Vulnerability ID", "Package", "Severity", "URL", "Summary"])
+              writer.writerow([
+                  "Title", "CWE ID", "Severity", "Description", "Mitigation",
+                  "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version"
+              ])
               for alert in alerts:
+                  advisory = alert.get("security_advisory", {})
+                  vuln = alert.get("security_vulnerability", {})
+                  package = vuln.get("package", {})
+
                   writer.writerow([
-                      alert.get("security_advisory", {}).get("ghsa_id", "N/A"),
-                      alert.get("security_vulnerability", {}).get("package", {}).get("name", "N/A"),
-                      alert.get("security_vulnerability", {}).get("severity", "UNKNOWN"),
-                      alert.get("html_url", ""),
-                      alert.get("security_advisory", {}).get("summary", "")
+                      advisory.get("ghsa_id", "Dependabot Issue"),
+                      "1035",  # CWE-1035: Placeholder for unknown
+                      vuln.get("severity", "Medium").capitalize(),
+                      advisory.get("summary", "No description provided."),
+                      "Update to a patched version.",
+                      "May lead to security vulnerabilities.",
+                      advisory.get("references", [{}])[0].get("url", ""),
+                      "", "",  # File path, Line number (optional)
+                      package.get("name", ""),
+                      package.get("ecosystem", "")
                   ])
           EOF
 
