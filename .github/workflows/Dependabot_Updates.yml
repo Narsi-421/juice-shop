@@ -30,8 +30,6 @@ jobs:
 
       - name: Convert Dependabot Alerts to DefectDojo CSV
         run: |
-                - name: Convert Dependabot Alerts to DefectDojo CSV
-        run: |
           python3 <<EOF
           import json, csv
           from datetime import date
