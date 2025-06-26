@@ -1,4 +1,4 @@
-name: ✅🔄🤖📦 Sending Dependabot Security Updates
+name: Dependabot Security Updates
 
 on:
   workflow_dispatch:  # You can manually trigger it
@@ -17,16 +17,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract Repository Name
+            - name: Extract Repository Name
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
-          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          REPO_NAME=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_ENV
 
       - name: Query Dependabot Alerts using GraphQL API
         run: |
           query='
           query {
-            repository(owner: "${{ github.repository_owner }}", name: "${REPO_NAME}") {
+            repository(owner: "'${GITHUB_REPOSITORY%%/*}'", name: "'${REPO_NAME}'") {
               nameWithOwner
               url
               vulnerabilityAlerts(first: 100) {
@@ -71,7 +71,6 @@ jobs:
           }'
 
           echo "$query" > query.graphql
-
           gh api graphql --field query="$(cat query.graphql)" > dependabot-security-alerts.json
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
