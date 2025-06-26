@@ -1,4 +1,4 @@
-name: Send Dependabot Alerts to DefectDojo
+name: Send GitHub Dependabot Alerts to DefectDojo
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 env:
   DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
-  DEFECTDOJO_URL_ngrok: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
+  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
   ENGAGEMENT_ID: 4
 
 jobs:
@@ -16,68 +16,125 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract repository name
+      - name: Extract repo owner and name
         run: |
-          REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)
-          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          echo "REPO_OWNER=$(echo ${{ github.repository }} | cut -d'/' -f1)" >> $GITHUB_ENV
+          echo "REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot Alerts using REST API
-        run: |
-          curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
-               -H "Accept: application/vnd.github+json" \
-               https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
-               -o dependabot-raw.json
-
-      - name: Convert Dependabot Alerts to DefectDojo JSON
+      - name: Fetch Dependabot Alerts (GraphQL)
         run: |
           python3 <<EOF
+          import os
+          import requests
           import json
-          from datetime import date
 
-          with open("dependabot-raw.json") as f:
-              alerts = json.load(f)
+          GITHUB_TOKEN = os.getenv("GH_TOKEN")
+          REPO_OWNER = os.getenv("REPO_OWNER")
+          REPO_NAME = os.getenv("REPO_NAME")
+          HEADERS = {
+              "Authorization": f"Bearer {GITHUB_TOKEN}",
+              "Accept": "application/vnd.github+json"
+          }
 
-          findings = []
-          for alert in alerts:
-              sa = alert.get("security_advisory", {})
-              sv = alert.get("security_vulnerability", {})
-              pkg = sv.get("package", {}).get("name", "unknown")
-              severity = sv.get("severity", "Medium")
-              cwes = sa.get("cwes", [])
-              cwe_id = cwes[0]["cwe_id"] if cwes else 1035
-              summary = sa.get("summary", "No summary")
-              description = sa.get("description", "")
-              references = ", ".join(r.get("url", "") for r in sa.get("references", []) if r.get("url"))
-              path = alert.get("dependency", {}).get("manifest_path", "")
-              req = sv.get("vulnerable_version_range", "")
+          def make_query(after_cursor=None):
+              return """
+          query getVulnerabilitiesByRepoAndOwner($name: String!, $owner: String!) {
+            repository(name: $name, owner: $owner) {
+              nameWithOwner
+              url
+              vulnerabilityAlerts(first: 100, after:AFTER, states: OPEN) {
+                nodes {
+                  id
+                  createdAt
+                  state
+                  vulnerableManifestPath
+                  vulnerableManifestFilename
+                  vulnerableRequirements
+                  number
+                  securityVulnerability {
+                    severity
+                    package { name }
+                    vulnerableVersionRange
+                    advisory {
+                      summary
+                      description
+                      identifiers { type value }
+                      references { url }
+                      cvss { score vectorString }
+                      cwes(first: 5) {
+                        nodes {
+                          cweId
+                          name
+                          description
+                        }
+                      }
+                    }
+                  }
+                }
+                totalCount
+                pageInfo {
+                  endCursor
+                  hasNextPage
+                }
+              }
+            }
+          }
+          """.replace("AFTER", f'"{after_cursor}"' if after_cursor else "null")
 
-              finding = {
-                  "title": f"{pkg} - {summary}",
-                  "cwe": cwe_id,
-                  "severity": severity,
-                  "description": description,
-                  "mitigation": "Update to safe version",
-                  "impact": "May allow exploitation",
-                  "references": references or "https://github.com",
-                  "component_name": pkg,
-                  "component_version": req,
-                  "file_path": path or "package.json",
-                  "date": str(date.today())
+          def fetch_all():
+              all_alerts = []
+              after = None
+              repo_data = {}
+
+              while True:
+                  query = make_query(after)
+                  payload = {
+                      "query": query,
+                      "variables": {
+                          "name": REPO_NAME,
+                          "owner": REPO_OWNER
+                      }
+                  }
+                  r = requests.post("https://api.github.com/graphql", headers=HEADERS, json=payload)
+                  result = r.json()
+
+                  repo = result["data"]["repository"]
+                  alerts = repo["vulnerabilityAlerts"]["nodes"]
+                  repo_data = {
+                      "nameWithOwner": repo["nameWithOwner"],
+                      "url": repo["url"],
+                      "vulnerabilityAlerts": { "nodes": alerts }
+                  }
+
+                  all_alerts.extend(alerts)
+
+                  page_info = repo["vulnerabilityAlerts"]["pageInfo"]
+                  if not page_info["hasNextPage"]:
+                      break
+                  after = page_info["endCursor"]
+
+              return {
+                  "repository": {
+                      "nameWithOwner": repo_data["nameWithOwner"],
+                      "url": repo_data["url"],
+                      "vulnerabilityAlerts": { "nodes": all_alerts }
+                  }
               }
 
-              findings.append(finding)
-
-          with open("dependabot-security-alerts.json", "w") as out:
-              json.dump({"findings": findings}, out, indent=2)
+          final_json = fetch_all()
+          with open("github-vuln-report.json", "w") as f:
+              json.dump(final_json, f, indent=2)
           EOF
+        env:
+          GH_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
 
       - name: Upload JSON to DefectDojo
         run: |
-          curl -X POST "${{ env.DEFECTDOJO_URL_ngrok }}/import-scan/" \
+          curl -X POST "${{ env.DEFECTDOJO_URL }}/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
             -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
             -F "engagement=${{ env.ENGAGEMENT_ID }}" \
             -F "scan_type=Github Vulnerability Scan" \
-            -F "file=@dependabot-security-alerts.json" \
+            -F "file=@github-vuln-report.json" \
             -F "active=true" \
             -F "verified=true"
