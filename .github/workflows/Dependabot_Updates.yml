@@ -8,7 +8,7 @@ permissions:
 
 env:
   DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
-  DEFECTDOJO_URL_ngrok: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
+  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
   ENGAGEMENT_ID: 4
 
 jobs:
@@ -21,62 +21,70 @@ jobs:
           REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)
           echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot Alerts using REST API
+      - name: Fetch Dependabot Alerts from GitHub REST API
         run: |
           curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
                -H "Accept: application/vnd.github+json" \
                https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
                -o dependabot-raw.json
 
-      - name: Convert Dependabot Alerts to DefectDojo CSV
+      - name: Convert Dependabot Alerts to DefectDojo CSV Format
         run: |
           python3 <<EOF
           import json, csv
-          from datetime import date
+          from datetime import datetime
 
           with open("dependabot-raw.json") as f:
               alerts = json.load(f)
 
-          with open("dependabot.csv", "w", newline="") as out:
+          with open("dependabot.csv", "w") as out:
               writer = csv.writer(out)
-              writer.writerow(["Title", "CWE ID", "Severity", "Description", "Mitigation",
-                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version", "Date"])
+              writer.writerow([
+                  "Title", "CWE ID", "Severity", "Description", "Mitigation", "Impact",
+                  "References", "File Path", "Line Number", "Component Name", "Component Version", "Date"
+              ])
 
               for alert in alerts:
-                  sa = alert.get("security_advisory", {})
-                  sv = alert.get("security_vulnerability", {})
-                  pkg = sv.get("package", {}).get("name", "unknown")
-                  severity = sv.get("severity", "Medium")
-                  cwe = sa.get("cwes", [{}])[0].get("cwe_id", "1035")
-                  summary = sa.get("summary", "No summary")
-                  description = sa.get("description", "")
-                  references = sa.get("references", [{}])[0].get("url", "")
-                  path = alert.get("dependency", {}).get("manifest_path", "")
-                  req = sv.get("vulnerable_version_range", "")
+                  advisory = alert.get("security_advisory", {})
+                  vuln = alert.get("security_vulnerability", {})
+                  dep = alert.get("dependency", {})
+
+                  pkg = vuln.get("package", {}).get("name", "unknown")
+                  severity = vuln.get("severity", "Medium")
+                  cwe_list = advisory.get("cwes", [])
+                  cwe = cwe_list[0].get("cwe_id", "1035") if cwe_list else "1035"
+                  summary = advisory.get("summary", "No summary")
+                  description = advisory.get("description", "")
+                  references = advisory.get("references", [])
+                  ref_url = references[0].get("url", "") if references else ""
+                  path = dep.get("manifest_path", "")
+                  version_range = vuln.get("vulnerable_version_range", "")
+                  created_at = alert.get("created_at", "")
+                  date_str = created_at.split("T")[0] if created_at else datetime.now().strftime("%Y-%m-%d")
 
                   writer.writerow([
                       f"{pkg} - {summary}",
                       cwe,
                       severity,
                       description,
-                      "Update to safe version",
-                      "May allow exploitation",
-                      references,
+                      "Update to a safe version",
+                      "May allow attacker to exploit the system",
+                      ref_url,
                       path,
-                      "",  # Line Number
+                      "",  # line number
                       pkg,
-                      req,
-                      str(date.today())
+                      version_range,
+                      date_str
                   ])
           EOF
 
       - name: Upload CSV to DefectDojo
         run: |
-          curl -X POST "${{ env.DEFECTDOJO_URL_ngrok }}/import-scan/" \
+          curl -X POST "${{ env.DEFECTDOJO_URL }}/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
             -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
             -F "engagement=${{ env.ENGAGEMENT_ID }}" \
-            -F "scan_type=Github Vulnerability Scan" \
-            -F "file=@dependabot-security-alerts.csv" \
+            -F "scan_type=Generic Findings Import" \
+            -F "file=@dependabot.csv" \
             -F "active=true" \
             -F "verified=true"
