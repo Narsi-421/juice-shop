@@ -1,66 +1,61 @@
-name: Send GitHub Dependabot Alerts to DefectDojo
+name: ✅🔄🤖📦 Sending Dependabot Security Updates
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # You can manually trigger it
 
 permissions:
   contents: read
 
 env:
   DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
-  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
+  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}/api/v2
   ENGAGEMENT_ID: 4
 
 jobs:
-  upload_dependabot:
+  import_dependabot_security_updates:
+    name: Import Dependabot Security Updates
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract repo owner and name
+      - name: Extract Repository Name
         run: |
-          echo "REPO_OWNER=$(echo ${{ github.repository }} | cut -d'/' -f1)" >> $GITHUB_ENV
-          echo "REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)" >> $GITHUB_ENV
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot Alerts (GraphQL)
+      - name: Query Dependabot Alerts using GraphQL API
         run: |
-          python3 <<EOF
-          import os
-          import requests
-          import json
-
-          GITHUB_TOKEN = os.getenv("GH_TOKEN")
-          REPO_OWNER = os.getenv("REPO_OWNER")
-          REPO_NAME = os.getenv("REPO_NAME")
-          HEADERS = {
-              "Authorization": f"Bearer {GITHUB_TOKEN}",
-              "Accept": "application/vnd.github+json"
-          }
-
-          def make_query(after_cursor=None):
-              return """
-          query getVulnerabilitiesByRepoAndOwner($name: String!, $owner: String!) {
-            repository(name: $name, owner: $owner) {
+          query='
+          query {
+            repository(owner: "${{ github.repository_owner }}", name: "${REPO_NAME}") {
               nameWithOwner
               url
-              vulnerabilityAlerts(first: 100, after:AFTER, states: OPEN) {
+              vulnerabilityAlerts(first: 100) {
                 nodes {
                   id
+                  number
                   createdAt
                   state
                   vulnerableManifestPath
-                  vulnerableManifestFilename
                   vulnerableRequirements
-                  number
                   securityVulnerability {
                     severity
-                    package { name }
-                    vulnerableVersionRange
+                    package {
+                      name
+                    }
                     advisory {
                       summary
                       description
-                      identifiers { type value }
-                      references { url }
-                      cvss { score vectorString }
+                      references {
+                        url
+                      }
+                      identifiers {
+                        type
+                        value
+                      }
+                      cvss {
+                        score
+                        vectorString
+                      }
                       cwes(first: 5) {
                         nodes {
                           cweId
@@ -71,70 +66,23 @@ jobs:
                     }
                   }
                 }
-                totalCount
-                pageInfo {
-                  endCursor
-                  hasNextPage
-                }
               }
             }
-          }
-          """.replace("AFTER", f'"{after_cursor}"' if after_cursor else "null")
+          }'
 
-          def fetch_all():
-              all_alerts = []
-              after = None
-              repo_data = {}
+          echo "$query" > query.graphql
 
-              while True:
-                  query = make_query(after)
-                  payload = {
-                      "query": query,
-                      "variables": {
-                          "name": REPO_NAME,
-                          "owner": REPO_OWNER
-                      }
-                  }
-                  r = requests.post("https://api.github.com/graphql", headers=HEADERS, json=payload)
-                  result = r.json()
-
-                  repo = result["data"]["repository"]
-                  alerts = repo["vulnerabilityAlerts"]["nodes"]
-                  repo_data = {
-                      "nameWithOwner": repo["nameWithOwner"],
-                      "url": repo["url"],
-                      "vulnerabilityAlerts": { "nodes": alerts }
-                  }
-
-                  all_alerts.extend(alerts)
-
-                  page_info = repo["vulnerabilityAlerts"]["pageInfo"]
-                  if not page_info["hasNextPage"]:
-                      break
-                  after = page_info["endCursor"]
-
-              return {
-                  "repository": {
-                      "nameWithOwner": repo_data["nameWithOwner"],
-                      "url": repo_data["url"],
-                      "vulnerabilityAlerts": { "nodes": all_alerts }
-                  }
-              }
-
-          final_json = fetch_all()
-          with open("github-vuln-report.json", "w") as f:
-              json.dump(final_json, f, indent=2)
-          EOF
+          gh api graphql --field query="$(cat query.graphql)" > dependabot-security-alerts.json
         env:
-          GH_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
 
-      - name: Upload JSON to DefectDojo
+      - name: Upload to DefectDojo
         run: |
-          curl -X POST "${{ env.DEFECTDOJO_URL }}/import-scan/" \
+          curl -X POST "${DEFECTDOJO_URL}/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
-            -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
-            -F "engagement=${{ env.ENGAGEMENT_ID }}" \
+            -F "product_name=${DEFECTDOJO_PRODUCT_NAME}" \
+            -F "engagement=${ENGAGEMENT_ID}" \
             -F "scan_type=Github Vulnerability Scan" \
-            -F "file=@github-vuln-report.json" \
+            -F "file=@dependabot-security-alerts.json" \
             -F "active=true" \
             -F "verified=true"
