@@ -30,16 +30,20 @@ jobs:
 
       - name: Convert Dependabot Alerts to DefectDojo CSV
         run: |
+                - name: Convert Dependabot Alerts to DefectDojo CSV
+        run: |
           python3 <<EOF
           import json, csv
+          from datetime import date
 
           with open("dependabot-raw.json") as f:
               alerts = json.load(f)
 
-          with open("dependabot.csv", "w") as out:
+          with open("dependabot.csv", "w", newline="") as out:
               writer = csv.writer(out)
               writer.writerow(["Title", "CWE ID", "Severity", "Description", "Mitigation",
-                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version","Date"])
+                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version", "Date"])
+
               for alert in alerts:
                   sa = alert.get("security_advisory", {})
                   sv = alert.get("security_vulnerability", {})
@@ -61,7 +65,10 @@ jobs:
                       "May allow exploitation",
                       references,
                       path,
-                      "", pkg, req
+                      "",  # Line Number
+                      pkg,
+                      req,
+                      str(date.today())
                   ])
           EOF
 
