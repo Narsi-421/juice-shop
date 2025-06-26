@@ -1,32 +1,33 @@
-name:  Sending Dependabot Security Updates
+name: Send Dependabot Security Alerts to DefectDojo
 
 on:
-  workflow_dispatch:  # You can manually trigger it
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
-  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}/api/v2
   ENGAGEMENT_ID: 4
 
 jobs:
-  import_dependabot_security_updates:
-    name: Import Dependabot Security Updates
+  upload_dependabot_alerts:
+    name: Import Dependabot alerts as GitHub Vulnerability Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract Repository Name
+      - name: Set repository details
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
-          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          echo "OWNER=${OWNER}" >> $GITHUB_ENV
+          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_ENV
 
-      - name: Query Dependabot Alerts using GraphQL API
+      - name: Create GraphQL query file
         run: |
-          query='
+          cat <<EOF > query.graphql
           query {
-            repository(owner: "${{ github.repository_owner }}", name: "${REPO_NAME}") {
+            repository(name: "${REPO_NAME}", owner: "${OWNER}") {
               nameWithOwner
               url
               vulnerabilityAlerts(first: 100) {
@@ -41,20 +42,25 @@ jobs:
                     severity
                     package {
                       name
+                      ecosystem
                     }
+                    firstPatchedVersion {
+                      identifier
+                    }
+                    vulnerableVersionRange
                     advisory {
                       summary
                       description
+                      identifiers {
+                        value
+                        type
+                      }
                       references {
                         url
                       }
-                      identifiers {
-                        type
-                        value
-                      }
                       cvss {
-                        score
                         vectorString
+                        score
                       }
                       cwes(first: 5) {
                         nodes {
@@ -68,20 +74,21 @@ jobs:
                 }
               }
             }
-          }'
+          }
+          EOF
 
-          echo "$query" > query.graphql
-
+      - name: Query GitHub GraphQL API for Dependabot alerts
+        run: |
           gh api graphql --field query="$(cat query.graphql)" > dependabot-security-alerts.json
         env:
           GITHUB_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
 
-      - name: Upload to DefectDojo
+      - name: Upload Dependabot JSON to DefectDojo
         run: |
-          curl -X POST "${DEFECTDOJO_URL}/import-scan/" \
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
-            -F "product_name=${DEFECTDOJO_PRODUCT_NAME}" \
-            -F "engagement=${ENGAGEMENT_ID}" \
+            -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
+            -F "engagement=${{ env.ENGAGEMENT_ID }}" \
             -F "scan_type=Github Vulnerability Scan" \
             -F "file=@dependabot-security-alerts.json" \
             -F "active=true" \
