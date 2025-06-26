@@ -16,23 +16,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Set repository name
+      - name: Extract repository name
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)
           echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot alerts via GitHub API
+      - name: Fetch Dependabot Alerts using REST API
         run: |
           curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
                -H "Accept: application/vnd.github+json" \
                https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
                -o dependabot-raw.json
 
-      - name: Convert alerts to JSON format for DefectDojo
+      - name: Convert Dependabot Alerts to DefectDojo JSON
         run: |
           python3 <<EOF
           import json
-          from datetime import datetime
+          from datetime import date
 
           with open("dependabot-raw.json") as f:
               alerts = json.load(f)
@@ -43,26 +43,29 @@ jobs:
               sv = alert.get("security_vulnerability", {})
               pkg = sv.get("package", {}).get("name", "unknown")
               severity = sv.get("severity", "Medium")
+              cwes = sa.get("cwes", [])
+              cwe_id = cwes[0]["cwe_id"] if cwes else 1035
               summary = sa.get("summary", "No summary")
               description = sa.get("description", "")
-              cwe = sa.get("cwes", [{}])[0].get("cwe_id", 1035)
-              refs = ", ".join(r.get("url", "") for r in sa.get("references", []))
-              vuln_range = sv.get("vulnerable_version_range", "")
+              references = ", ".join(r.get("url", "") for r in sa.get("references", []) if r.get("url"))
               path = alert.get("dependency", {}).get("manifest_path", "")
+              req = sv.get("vulnerable_version_range", "")
 
-              findings.append({
+              finding = {
                   "title": f"{pkg} - {summary}",
-                  "description": description,
+                  "cwe": cwe_id,
                   "severity": severity,
-                  "mitigation": "Update to a safe version",
+                  "description": description,
+                  "mitigation": "Update to safe version",
                   "impact": "May allow exploitation",
-                  "references": refs,
+                  "references": references or "https://github.com",
                   "component_name": pkg,
-                  "component_version": vuln_range,
-                  "file_path": path,
-                  "date": str(datetime.today().date()),
-                  "cwe": cwe
-              })
+                  "component_version": req,
+                  "file_path": path or "package.json",
+                  "date": str(date.today())
+              }
+
+              findings.append(finding)
 
           with open("dependabot-security-alerts.json", "w") as out:
               json.dump({"findings": findings}, out, indent=2)
