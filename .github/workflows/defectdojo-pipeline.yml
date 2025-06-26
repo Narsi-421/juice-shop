@@ -1,4 +1,4 @@
-name: Juice Shop CI/CD via Self-Hosted Runner
+name: CI/CD via Self-Hosted Runner
 
 on:
   push:
