@@ -1,60 +1,76 @@
-name: 📦🚨 Send Dependabot Alerts to DefectDojo
+name: Send Dependabot Alerts to DefectDojo
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+
+permissions:
+  contents: read
+
+env:
+  DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
+  DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL_ngrok }}/api/v2
+  ENGAGEMENT_ID: 4
 
 jobs:
-  upload-dependabot-alerts:
-    runs-on: self-hosted  # Use your internal runner that can reach DefectDojo
+  upload_dependabot:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Extract repository name
+        run: |
+          REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot Alerts from GitHub API
+      - name: Fetch Dependabot Alerts using REST API
         run: |
           curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
                -H "Accept: application/vnd.github+json" \
                https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
-               -o raw-dependabot-alerts.json
+               -o dependabot-raw.json
 
-      - name: Convert Dependabot Alerts to CSV for DefectDojo
+      - name: Convert Dependabot Alerts to DefectDojo CSV
         run: |
           python3 <<EOF
-          import json
-          import csv
+          import json, csv
 
-          with open("raw-dependabot-alerts.json", "r") as f:
+          with open("dependabot-raw.json") as f:
               alerts = json.load(f)
 
-          with open("dependabot.csv", "w", newline='') as out:
+          with open("dependabot.csv", "w") as out:
               writer = csv.writer(out)
-              writer.writerow(["Vulnerability ID", "Package", "Severity", "URL", "Summary"])
-
+              writer.writerow(["Title", "CWE ID", "Severity", "Description", "Mitigation",
+                               "Impact", "References", "File Path", "Line Number", "Component Name", "Component Version"])
               for alert in alerts:
-                  advisory = alert.get("security_advisory", {})
-                  vuln = alert.get("security_vulnerability", {})
-                  package = vuln.get("package", {})
+                  sa = alert.get("security_advisory", {})
+                  sv = alert.get("security_vulnerability", {})
+                  pkg = sv.get("package", {}).get("name", "unknown")
+                  severity = sv.get("severity", "Medium")
+                  cwe = sa.get("cwes", [{}])[0].get("cwe_id", "1035")
+                  summary = sa.get("summary", "No summary")
+                  description = sa.get("description", "")
+                  references = sa.get("references", [{}])[0].get("url", "")
+                  path = alert.get("dependency", {}).get("manifest_path", "")
+                  req = sv.get("vulnerable_version_range", "")
 
                   writer.writerow([
-                      advisory.get("ghsa_id", "N/A"),
-                      package.get("name", "N/A"),
-                      vuln.get("severity", "UNKNOWN"),
-                      alert.get("html_url", ""),
-                      advisory.get("summary", "")
+                      f"{pkg} - {summary}",
+                      cwe,
+                      severity,
+                      description,
+                      "Update to safe version",
+                      "May allow exploitation",
+                      references,
+                      path,
+                      "", pkg, req
                   ])
           EOF
 
       - name: Upload CSV to DefectDojo
-        env:
-          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL_ngrok }}
-          DD_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}
         run: |
-          curl -X POST "$DEFECTDOJO_URL/api/v2/import-scan/" \
-            -H "Authorization: Token $DD_API_TOKEN" \
-            -F "engagement=4" \
+          curl -X POST "${{ env.DEFECTDOJO_URL_ngrok }}/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
+            -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
+            -F "engagement=${{ env.ENGAGEMENT_ID }}" \
             -F "scan_type=Generic Findings Import" \
             -F "file=@dependabot.csv" \
             -F "active=true" \
