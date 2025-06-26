@@ -33,7 +33,7 @@ jobs:
           from datetime import datetime
           with open("dependabot-raw.json") as f:
               alerts = json.load(f)
-          with open("dependabot.csv", "w") as out:
+          with open("dependabot-security-alerts.csv", "w") as out:
               writer = csv.writer(out)
               writer.writerow([
                   "Title", "CWE ID", "Severity", "Description", "Mitigation", "Impact",
