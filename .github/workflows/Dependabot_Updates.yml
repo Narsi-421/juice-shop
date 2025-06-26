@@ -1,4 +1,4 @@
-name: Send Dependabot Alerts to DefectDojo
+name: Send Dependabot Alerts to DefectDojo (JSON)
 
 on:
   workflow_dispatch:
@@ -16,19 +16,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract repository name
+      - name: Set REPO_NAME
         run: |
           REPO_NAME=$(echo ${{ github.repository }} | cut -d'/' -f2)
           echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
 
-      - name: Fetch Dependabot Alerts using REST API
-        run: |
-          curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
-               -H "Accept: application/vnd.github+json" \
-               https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
-               -o dependabot-raw.json
+      - name: Install GitHub CLI
+        uses: cli/gh-action@v2
 
-      - name: Upload raw JSON to DefectDojo using GitHub Vulnerability Scan
+      - name: Fetch Dependabot Alerts via GraphQL
+        run: |
+          gh api graphql -F query='
+            query {
+              repository(owner: "${{ github.repository_owner }}", name: "${{ env.REPO_NAME }}") {
+                vulnerabilityAlerts(first: 20) {
+                  nodes {
+                    createdAt
+                    vulnerableManifestPath
+                    securityVulnerability {
+                      package { name }
+                      vulnerableVersionRange
+                      advisory {
+                        severity
+                        summary
+                        description
+                        references { url }
+                        identifiers { type value }
+                        cwes(first: 5) {
+                          nodes {
+                            cweId
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' > dependabot-raw.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_SECURITY_TOKEN }}
+
+      - name: Upload JSON to DefectDojo
         run: |
           curl -X POST "${{ env.DEFECTDOJO_URL_ngrok }}/import-scan/" \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
