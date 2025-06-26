@@ -32,6 +32,9 @@ jobs:
       with:
         node-version: '21'
 
+    - name: Add SonarScanner to PATH
+      run: echo "/opt/sonar-scanner/bin" >> $GITHUB_PATH
+    
     - name: SonarQube Analysis
       run: |
         sonar-scanner \
