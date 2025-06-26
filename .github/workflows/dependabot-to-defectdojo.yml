@@ -1,20 +1,36 @@
-    - name: Fetch Dependabot Alerts
-      run: |
-        curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
-             -H "Accept: application/vnd.github+json" \
-             https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
-             -o raw-dependabot-alerts.json
+name: Upload Dependabot Alerts to DefectDojo
 
-    - name: Convert Dependabot Alerts to DefectDojo CSV
-      run: |
-        echo '"Title","CWE ID","Severity","Description","Mitigation","Impact","References","File Path","Line Number","Component Name","Component Version"' > dependabot.csv
-        python3 <<EOF
-import json
-import csv
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'  # Every day at 3 AM UTC
 
-with open("raw-dependabot-alerts.json") as f:
-    alerts = json.load(f)
+env:
+  DEFECTDOJO_URL: http://192.168.15.20:8080
+  ENGAGEMENT_ID: 4
+  DEFECTDOJO_PRODUCT_NAME: Owasp-juice-shop
 
+jobs:
+  upload-dependabot:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Fetch Dependabot Alerts
+        run: |
+          curl -s -H "Authorization: token ${{ secrets.GH_SECURITY_TOKEN }}" \
+               -H "Accept: application/vnd.github+json" \
+               https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
+               -o raw-dependabot-alerts.json
+
+      - name: Convert Alerts to CSV
+        run: |
+          echo '"Title","CWE ID","Severity","Description","Mitigation","Impact","References","File Path","Line Number","Component Name","Component Version"' > dependabot.csv
+          python3 <<EOF
+import json, csv
+with open("raw-dependabot-alerts.json") as f: alerts = json.load(f)
 with open("dependabot.csv", "a") as out:
     writer = csv.writer(out)
     for alert in alerts:
@@ -27,20 +43,21 @@ with open("dependabot.csv", "a") as out:
             advisory.get("description", "N/A").replace('\n', ' '),
             "Upgrade dependency",
             "May allow exploitation",
-            advisory.get("references", [{}])[0].get("url", "https://github.com"),
+            advisory.get("references", [{}])[0].get("url", ""),
             alert.get("vulnerable_manifest_path", ""),
             "",
-            vuln.get("package", {}).get("name", "N/A"),
-            vuln.get("package", {}).get("ecosystem", "N/A")
+            vuln.get("package", {}).get("name", ""),
+            vuln.get("package", {}).get("ecosystem", "")
         ])
 EOF
 
-    - name: Upload Dependabot to DefectDojo
-      run: |
-        curl -X POST "$DEFECTDOJO_URL/api/v2/import-scan/" \
-          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
-          -F "scan_type=Generic Findings Import" \
-          -F "engagement=4" \
-          -F "file=@dependabot.csv" \
-          -F "active=true" \
-          -F "verified=true"
+      - name: Upload CSV to DefectDojo
+        run: |
+          curl -X POST "${{ env.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_TOKEN }}" \
+            -F "scan_type=Generic Findings Import" \
+            -F "engagement=${{ env.ENGAGEMENT_ID }}" \
+            -F "product_name=${{ env.DEFECTDOJO_PRODUCT_NAME }}" \
+            -F "file=@dependabot.csv" \
+            -F "active=true" \
+            -F "verified=true"
