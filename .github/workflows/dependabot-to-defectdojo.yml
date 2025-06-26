@@ -1,4 +1,4 @@
-name: ✅🔄🤖📦 Sending Dependabot Security Updates
+name: Sending Dependabot Security Updates
 
 on:
   workflow_run:
